@@ -1,7 +1,5 @@
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -22,16 +20,39 @@ df_encoded = pd.get_dummies(df, columns=['Provinsi', 'Komoditas'])
 x = df_encoded.drop(columns='Harga')
 y = df_encoded['Harga']
 
-x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=4)
+train_size = int(0.8 * len(x))
+x_train, x_test = x[:train_size], x[train_size:]
+y_train, y_test = y[:train_size], y[train_size:]
 
-lin_reg = LinearRegression()
-lin_reg.fit(x_train, y_train)
+class ManualLinearRegression:
+    def __init__(self):
+        self.coefficients = None
+        self.intercept = None
+
+    def fit(self, bulan, harga):
+        bulan = np.array(bulan)
+        harga = np.array(harga)
+
+        X = np.c_[np.ones(len(bulan)), bulan]
+        y = harga
+
+        X_transpose = X.T
+        self.coefficients = np.linalg.inv(X_transpose @ X) @ X_transpose @ y
+        self.intercept = self.coefficients[0]
+        self.slope = self.coefficients[1]
+
+    def predict(self, bulan_prediksi):
+        return self.intercept + self.slope * bulan_prediksi
+
+
+lin_reg = ManualLinearRegression()
 
 app = Flask(__name__)
 CORS(app)
 
 @app.route("/", methods=["POST"])
-def predict():
+
+def user_input_prediction():
     try:
         data = request.get_json()
 
@@ -47,54 +68,61 @@ def predict():
         except ValueError:
             return jsonify({"error": "'bulan' must be an integer"}), 400
 
-        # Ensure 'bulan' is valid
         if bulan not in range(1, 13):
             return jsonify({"error": "'bulan' must be between 1 and 12"}), 400
-
-        # Input data for prediction
-        input_data = {
-            'Bulan': [bulan]
-        }
-        input_data.update({f'Provinsi_{provinsi}': [1]})
-        input_data.update({f'Komoditas_{komoditas}': [1]})
-
-        input_df = pd.DataFrame(input_data)
-        input_df = input_df.reindex(columns=x.columns, fill_value=0)
-
-        # Predict the price for the given month
+        
         try:
-            predicted_price = lin_reg.predict(input_df)[0]
+            bulan = bulan
+        except ValueError:
+            print("Invalid input. 'Bulan' must be an integer.")
+            return
+
+        provinsiLower = provinsi.lower()
+        komoditasLower = komoditas.lower()
+        filtered_data = df[(df['Provinsi'].str.lower() == provinsiLower) & (df['Komoditas'].str.lower() == komoditasLower)]
+
+        price = np.array(filtered_data['Harga'])
+        month = np.array(filtered_data['Bulan'])
+
+        # Train the model using the filtered data
+        if(bulan <= filtered_data['Bulan'].iloc[-1]):
+                bulan = bulan + 12
+        else: 
+            bulan = bulan
+            print(bulan)
+        
+        lin_reg.fit(month, price)
+        
+        try:
+            prediction = lin_reg.predict(bulan)
         except Exception as e:
             return jsonify({"error": f"Prediction failed: {str(e)}"}), 400
 
-        # Retrieve the last month's price
-        previous_month = bulan - 1
-        if previous_month == 0:
-            return jsonify({"error": "Cannot calculate percentage change for January (no previous month)"}), 400
+        if(bulan > 12):
+            bulan = bulan - 12
+        else:
+            bulan = bulan
 
-        previous_price_row = df[(df['Provinsi'] == provinsi) & 
-                                (df['Komoditas'] == komoditas) & 
-                                (df['Bulan'] == previous_month)]
+        if filtered_data.empty:
+            return jsonify({"error": f"No data available for the previous month ({bulan})"}), 400
 
-        if previous_price_row.empty:
-            return jsonify({"error": f"No data available for the previous month ({previous_month})"}), 400
-
-        previous_price = previous_price_row['Harga'].iloc[0]
-
+        previous_price = filtered_data['Harga'].iloc[-1]
+        
         # Calculate percentage change
-        percentage_change = ((predicted_price - previous_price) / previous_price) * 100
+        percentage_change = ((prediction - previous_price) / previous_price) * 100
 
         return jsonify({
             "provinsi": provinsi,
             "komoditas": komoditas,
             "bulan": bulan,
-            "predicted_price": round(predicted_price, 2),
-            "previous_price": round(previous_price, 2),
+            "predicted_price": round(prediction),
+            "previous_price": round(previous_price),
             "percentage_change": round(percentage_change, 2)
         })
 
     except Exception as e:
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
+# Run the prediction loop
 if __name__ == "__main__":
     app.run(port=3998, debug=True)
