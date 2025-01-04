@@ -84,7 +84,6 @@ def user_input_prediction():
         price = np.array(filtered_data['Harga'])
         month = np.array(filtered_data['Bulan'])
 
-        # Train the model using the filtered data
         if(bulan <= filtered_data['Bulan'].iloc[-1]):
                 bulan = bulan + 12
         else: 
@@ -108,7 +107,6 @@ def user_input_prediction():
 
         previous_price = filtered_data['Harga'].iloc[-1]
         
-        # Calculate percentage change
         percentage_change = ((prediction - previous_price) / previous_price) * 100
 
         return jsonify({
@@ -123,6 +121,5 @@ def user_input_prediction():
     except Exception as e:
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
-# Run the prediction loop
 if __name__ == "__main__":
     app.run(port=3998, debug=True)
